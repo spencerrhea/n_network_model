@@ -1,0 +1,344 @@
+---
+title: "Network Structure- N Removal"
+author: "Spencer Rhea"
+date: "2023-02-06"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      include = FALSE,
+                      message = FALSE,
+                      warning = FALSE)
+library(tmap)
+library(tidyverse)
+library(ggthemes)
+```
+
+
+```{r}
+network_attr <- read_csv('/Users/spencerrhea/git/n_network_model/data/network_attr.csv') %>%
+    mutate(comid = as.character(comid))
+
+comids <- list.files('/Users/spencerrhea/git/n_network_model/data/model_output/load_0.001/')
+
+all_networks <- tibble()
+for(i in 1:length(comids)){
+    this_comid <- comids[i]
+    network_data_ <- read_rds(paste0('/Users/spencerrhea/git/n_network_model/data/model_output/load_0.001/', this_comid, '/model_outpu.rds'))
+    
+    outlet_info_ <- network_data_ %>%
+        filter(total_drain_area_km == max(total_drain_area_km))
+    
+    small_streams_ <- network_data_ %>%
+        filter(stream_order <= 2) 
+    
+    small_stream_removal_ <- sum(small_streams_$Nlost)
+    
+    large_streams_ <- network_data_ %>%
+        filter(stream_order > 2)
+    
+    large_stream_removal_ <- sum(large_streams_$Nlost)
+
+    n_load_tot <- sum(network_data_$Nload)
+    n_out <- outlet_info_$Nout
+
+    frac_removed <- 1-(n_out/n_load_tot)
+
+    stream_surface_area <- sum(network_data_$SurfArea)
+    stream_length <- sum(network_data_$length_km)
+
+    this_data_info <- tibble(comid = this_comid,
+           area_km = outlet_info_$total_drain_area_km,
+           stream_length = stream_length,
+           stream_surface_area = stream_surface_area,
+           n_load_kg = n_load_tot,
+           n_removed = n_load_tot - n_out,
+           small_stream_removal = small_stream_removal_,
+           large_stream_removal = large_stream_removal_,
+           frac_removed = frac_removed)
+
+    all_networks <- rbind(all_networks, this_data_info)
+}
+all_networks_old <- all_networks
+
+all_networks <- all_networks %>%
+    mutate(comid = ifelse(comid == '8608649', '8607673', comid),
+           comid = ifelse(comid == '8422238', '8422212', comid))
+
+final_table <- left_join(all_networks, network_attr) %>%
+    mutate(surface_area_to_area = ((stream_surface_area)/(area_km*1e+6))*100) %>%
+    mutate(percent_removed = frac_removed * 100)
+```
+
+# Plot of all watersheds 
+```{r, include=TRUE}
+surdace_area_order <- all_networks_old %>%
+    arrange(stream_surface_area) %>%
+    pull(comid)
+
+
+# par(mfcol=c(4,4))
+all_plots <- list()
+# for(i in length(surdace_area_order)){
+for(i in 1:15){
+    
+    comid <- surdace_area_order[i]
+    
+    this_network <- read_rds(paste0('/Users/spencerrhea/git/n_network_model/data/nhd_files/', comid, '/flowlines.rds'))
+    
+    if(comid == '8608649'){
+        comid <- '8607673'
+    }
+    if(comid =='8422238'){
+        comid <- '8422212'
+    }
+    
+    this_plot <- this_network %>%
+        select(comid) %>%
+        ggplot() +
+        geom_sf() +
+        theme_few() +
+        ggtitle(comid) +
+        theme(axis.text = element_blank(),
+              axis.ticks = element_blank())
+    
+    all_plots[[i]] <- this_plot
+}
+
+ggpubr::ggarrange(all_plots[[1]], all_plots[[2]], all_plots[[3]], all_plots[[4]],
+                  all_plots[[5]], all_plots[[6]], all_plots[[7]], all_plots[[8]],
+                  all_plots[[9]], all_plots[[10]], all_plots[[11]], all_plots[[12]],
+                  all_plots[[13]], all_plots[[14]], all_plots[[15]])
+```
+
+# Two interactive plots at each end of range of stream surface area 
+
+# A Narrow Network
+```{r, include=TRUE}
+# Second Most 12377407
+model_outut <- read_rds('/Users/spencerrhea/git/n_network_model/data/model_output/load_0.001/12377407/model_outpu.rds') %>%
+    mutate(percent_removed = (Nlost/Nloc)*100)
+
+flowlines <- read_rds(paste0('/Users/spencerrhea/git/n_network_model/data/nhd_files/', 12377407, '/flowlines.rds')) %>%
+    select(comid, geometry)
+
+n_net_data_sf <- merge(flowlines, model_outut, by = 'comid')
+
+mapview::mapview(n_net_data_sf, zcol = 'percent_removed')
+```
+
+# A Square Network
+```{r, include=TRUE}
+# Second Least 14930395
+model_outut <- read_rds('/Users/spencerrhea/git/n_network_model/data/model_output/load_0.001/14930395/model_outpu.rds') %>%
+    mutate(percent_removed = (Nlost/Nloc)*100) %>%
+    select(comid, stream_order, length_km,
+           Qlocal, Qnet, Qout, Nload, Nnet, Nloc, SurfArea, percent_removed) %>%
+    mutate_at(., .vars = c('length_km',
+           'Qlocal', 'Qnet', 'Qout', 'Nload', 'Nnet', 'Nloc', 'SurfArea', 'percent_removed'), 
+           ~round(.x, 3))
+
+flowlines <- read_rds(paste0('/Users/spencerrhea/git/n_network_model/data/nhd_files/', 14930395, '/flowlines.rds')) %>%
+    select(comid, geometry) 
+
+n_net_data_sf <- merge(flowlines, model_outut, by = 'comid')
+
+mapview::mapview(n_net_data_sf, zcol = 'percent_removed')
+
+```
+
+```{r}
+all_fils <- list.files('/Users/spencerrhea/git/n_network_model/data/model_output/', full.names = T, recursive = T)
+
+network_attr <- read_csv('/Users/spencerrhea/git/n_network_model/data/network_attr.csv') %>%
+    mutate(comid = as.character(comid))
+
+all_networks <- tibble()
+for(i in 1:length(all_fils)){
+
+    network_data <- read_rds(all_fils[i])
+    n_load <- str_match(all_fils[i], 'load_......')
+    n_load <- str_split_fixed(n_load, '_', n = Inf)[1,2]
+    n_load <- str_split_fixed(n_load, '/', n = Inf)[1,1]
+
+    this_comid <- str_split_fixed(all_fils[i], '/', n = Inf)[1,10]
+
+    outlet_info <- network_data %>%
+        filter(total_drain_area_km == max(total_drain_area_km))
+    
+    small_streams <- network_data %>%
+        filter(stream_order <= 2) 
+    
+    small_stream_removal <- sum(small_streams$Nlost)
+    
+    large_streams <- network_data %>%
+        filter(stream_order > 2)
+    
+    large_stream_removal <- sum(large_streams$Nlost)
+
+    n_load_tot <- sum(network_data$Nload) 
+    n_out <- outlet_info$Nout
+
+    frac_removed <- 1-(n_out/n_load_tot)
+
+    stream_surface_area <- sum(network_data$SurfArea)
+    stream_length <- sum(network_data$length_km)
+
+    this_data_info <- tibble(comid = this_comid,
+                             area_km = outlet_info$total_drain_area_km,
+                             stream_length = stream_length,
+                             stream_surface_area = stream_surface_area,
+                             n_load_kg = n_load_tot,
+                             n_removed = n_load_tot - n_out,
+                             small_stream_removal = small_stream_removal,
+                             small_stream_removal_frac = small_stream_removal/n_load_tot,
+                             large_stream_removal = large_stream_removal,
+                             large_stream_removal_frac = large_stream_removal/n_load_tot,
+                             frac_removed = frac_removed,
+                             n_load = n_load)
+
+    all_networks <- rbind(all_networks, this_data_info)
+}
+
+all_networks <- all_networks %>%
+    mutate(comid = ifelse(comid == '8608649', '8607673', comid),
+           comid = ifelse(comid == '8422238', '8422212', comid))
+
+final_load_table <- left_join(all_networks, network_attr) %>%
+    mutate(surface_area_to_area = (stream_surface_area)/(area_km*1e+6)) %>%
+    mutate(percent_removed = frac_removed * 100) %>%
+    mutate(n_load = as.numeric(n_load))  %>%
+    mutate(comid = fct_reorder(comid, desc(stream_surface_area))) 
+
+worst_network <- final_load_table %>%
+    filter(comid == '9064520') %>%
+    select(n_load, frac_removed, small_stream_removal_frac, large_stream_removal_frac) %>%
+    rename(worst_frac_removed = frac_removed, 
+           worst_small_stream_removal_frac = small_stream_removal_frac,
+           worst_large_stream_removal_frac = large_stream_removal_frac)
+
+final_load_table_dif <- left_join(final_load_table, worst_network) %>%
+    mutate(removal_dif = frac_removed - worst_frac_removed,
+           small_removal_dif = small_stream_removal_frac - worst_small_stream_removal_frac,
+           large_removal_dif = large_stream_removal_frac - worst_large_stream_removal_frac)
+```
+
+# Total Removal 
+## Network 
+```{r, include=TRUE}
+ggplot(final_load_table, aes(x = n_load, y = frac_removed, color = comid)) +
+    geom_line() +
+    theme_few() +
+    scale_x_log10() +
+    viridis::scale_color_viridis(discrete = T) +
+    labs(x = 'N Load (kg/ha/d)', y = 'Fraction N Removed')
+```
+
+## Small Streams
+```{r, include=TRUE}
+ggplot(final_load_table, aes(x = n_load, y = small_stream_removal_frac, color = comid)) +
+    geom_line() +
+    theme_few() +
+    scale_x_log10() +
+    viridis::scale_color_viridis(discrete = T) +
+    labs(x = 'N Load (kg/ha/d)', y = 'Fraction N Removed (Small Streams)')
+```
+
+## Large Streams
+```{r, include=TRUE}
+ggplot(final_load_table, aes(x = n_load, y = large_stream_removal_frac, color = comid)) +
+    geom_line() +
+    theme_few() +
+    scale_x_log10() +
+    viridis::scale_color_viridis(discrete = T) +
+    labs(x = 'N Load (kg/ha/d)', y = 'Fraction N Removed (Large Streams)')
+```
+
+# Diffrene from network with lease removal
+## Network 
+```{r, include=TRUE}
+ ggplot(final_load_table_dif,
+                      aes(x = n_load, y = removal_dif, color = comid)) +
+    geom_line() +
+    theme_few() +
+    scale_x_log10() +
+    viridis::scale_color_viridis(discrete = T) +
+    labs(x = 'N Load (kg/ha/d)', y = 'Diff. Fraction N Removed')
+```
+
+## Small Streams 
+```{r, include=TRUE}
+ ggplot(final_load_table_dif,
+                      aes(x = n_load, y = small_removal_dif, color = comid)) +
+    geom_line() +
+    theme_few() +
+    scale_x_log10() +
+    viridis::scale_color_viridis(discrete = T) +
+    labs(x = 'N Load (kg/ha/d)', y = 'Diff. Fraction N Removed (Small Streams)')
+```
+
+## Large
+```{r, include=TRUE}
+ ggplot(final_load_table_dif,
+                      aes(x = n_load, y = large_removal_dif, color = comid)) +
+    geom_line() +
+    theme_few() +
+    scale_x_log10() +
+    viridis::scale_color_viridis(discrete = T) +
+    labs(x = 'N Load (kg/ha/d)', y = 'Diff. Fraction N Removed (Large Streams)')
+```
+
+
+# It's all about stream surface area 
+```{r}
+final_load_table %>%
+    mutate(percent_is_stream = surface_area_to_area * 100) %>%
+    filter(n_load %in% c(0.00001, 0.001, 0.01, 0.1, 3)) %>%
+    # filter(n_load == 1) %>%
+    mutate(n_load = as.factor(n_load)) %>%
+    ggplot(., aes(percent_is_stream, percent_removed, color = n_load)) +
+    geom_point() +
+    stat_smooth(method = 'lm') +
+    theme_few() +
+    scale_color_brewer(palette = 'Set1') +
+    labs(x = 'Percent watershed is stream',
+         y = 'Percent N removed')
+```
+
+## Hortons length ratio
+```{r}
+final_load_table %>%
+    filter(n_load %in% c(0.00001, 0.001, 0.01, 0.1, 3)) %>%
+    # filter(n_load == 1) %>%
+    mutate(n_load = as.factor(n_load)) %>%
+    ggplot(., aes(RI, percent_removed, color = n_load)) +
+    geom_point() +
+    stat_smooth(method = 'lm') +
+    theme_few() +
+    labs(x = 'Hortons length ratio',
+         y = 'Percent of N removed')
+
+summary(lm(RI~frac_removed+as.factor(n_load), final_load_table))
+
+
+```
+
+## Hortons Area Ratio
+```{r}
+final_load_table %>%
+    filter(n_load %in% c(0.00001, 0.001, 0.01, 0.1, 3)) %>%
+    # filter(n_load == 1) %>%
+    mutate(n_load = as.factor(n_load)) %>%
+    ggplot(., aes(Ra, frac_removed, color = n_load)) +
+    geom_point() +
+    stat_smooth(method = 'lm') +
+    theme_few() +
+    labs(x = 'Hortons area ratio',
+         y = 'Percent of N removed')
+
+summary(lm(Ra~frac_removed+as.factor(n_load), final_load_table))
+```
+
